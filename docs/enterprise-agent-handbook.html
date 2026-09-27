@@ -258,6 +258,7 @@
         <li><a data-target="ch4-6">4.6 范式选择与混合</a></li>
         <li><a data-target="ch4-7">4.7 工程实现</a></li>
         <li><a data-target="ch4-8">4.8 异常处理与恢复</a></li>
+        <li><a data-target="ch4-9">4.9 Workflow 与 Automation Contract</a></li>
       </ul>
     </div>
 
@@ -362,6 +363,7 @@
         <li><a data-target="ch11-9">11.9 Event Sourcing</a></li>
         <li><a data-target="ch11-10">11.10 Replay</a></li>
         <li><a data-target="ch11-11">11.11 Deterministic Resume</a></li>
+        <li><a data-target="ch11-12">11.12 State Concurrency 与 Execution Ownership</a></li>
       </ul>
     </div>
 
@@ -377,6 +379,7 @@
         <li><a data-target="ch12-7">12.7 Dead Letter Queue</a></li>
         <li><a data-target="ch12-8">12.8 Human-in-the-loop</a></li>
         <li><a data-target="ch12-9">12.9 Human Takeover</a></li>
+        <li><a data-target="ch12-10">12.10 Durable Timer 与任务唤醒</a></li>
       </ul>
     </div>
 
@@ -465,6 +468,7 @@
         <li><a data-target="ch18-4">18.4 Agent CI/CD 流水线</a></li>
         <li><a data-target="ch18-5">18.5 Quality Gate</a></li>
         <li><a data-target="ch18-6">18.6 Canary 发布与回滚</a></li>
+        <li><a data-target="ch18-7">18.7 Platform Operating Model 与治理</a></li>
       </ul>
     </div>
 
@@ -531,6 +535,8 @@
         <li><a data-target="ch23-5">23.5 Task Delegation 与 Handoff</a></li>
         <li><a data-target="ch23-6">23.6 Cross-Agent Trust</a></li>
         <li><a data-target="ch23-7">23.7 A2A 生产实践</a></li>
+        <li><a data-target="ch23-8">23.8 Experience Plane 与 A2UI</a></li>
+        <li><a data-target="ch23-9">23.9 Platform API Contract</a></li>
       </ul>
     </div>
 
@@ -549,6 +555,7 @@
         <li><a data-target="ch24-8">24.8 Multi-Tenant 架构</a></li>
         <li><a data-target="ch24-9">24.9 微服务拆分</a></li>
         <li><a data-target="ch24-10">24.10 部署拓扑</a></li>
+        <li><a data-target="ch24-11">24.11 Event Contract 与 Delivery Semantics</a></li>
       </ul>
     </div>
 
@@ -1242,9 +1249,36 @@ data: [DONE]</pre>
         <span class="kw">return</span> {<span class="str">"error"</span>: <span class="str">f"工具执行失败：{type(e).__name__}: {e}"</span>}</pre>
   <div class="callout note"><b>核心原则</b>工具层和参数层的错误，最正确的处理方式是把错误信息回填给模型，而不是在客户端硬编码"遇到错误 X 就做 Y"。这比客户端猜测修复更灵活，也更符合 Agent 的设计哲学。</div>
 
+  <h2 class="sec" id="ch4-9">4.9 Workflow 与 Automation Contract</h2>
+  <p>Workflow 是确定性执行路径，Automation 是由 API、事件、Webhook 或时间触发的 Workflow 实例。二者应与 Agent 动态决策分离，但可以在某个 Step 内调用 Agent。</p>
+  <pre class="cb">WorkflowDefinition = {
+  "workflow_id": "refund_workflow",
+  "version": "v3",
+  "trigger": ["api", "event", "schedule"],
+  "steps": [
+    { "id": "load_order", "type": "tool", "retry_policy": "read_default" },
+    { "id": "check_policy", "type": "rule", "depends_on": ["load_order"] },
+    { "id": "approval", "type": "human", "depends_on": ["check_policy"] },
+    { "id": "execute", "type": "tool", "depends_on": ["approval"] }
+  ],
+  "timeout": "30m",
+  "version_policy": "pin_on_start"
+}</pre>
+  <table class="st">
+    <thead><tr><th>能力</th><th>Workflow</th><th>Agent</th></tr></thead>
+    <tbody>
+      <tr><td>下一步决策</td><td>由定义好的 DAG / 状态机决定</td><td>由模型结合 Observation 动态决定</td></tr>
+      <tr><td>可预测性</td><td>高，可审计、可回放</td><td>受模型输出影响，需要额外验证</td></tr>
+      <tr><td>适用场景</td><td>审批、支付、同步、固定业务流程</td><td>探索、分析、复杂问答、开放式任务</td></tr>
+      <tr><td>失败处理</td><td>显式 Retry、Compensation、Human Step</td><td>由 Strategy、Policy 和 Runtime 协同处理</td></tr>
+    </tbody>
+  </table>
+  <p>Automation 触发器必须具备去重和版本语义：同一事件重复投递不能创建多个业务副作用；已启动的实例固定使用创建时的 Workflow / Agent 版本；升级只影响新实例，除非经过显式迁移。</p>
+  <div class="callout tip"><b>组合原则</b>用 Intent 选择 Workflow 或 Agent，用 Workflow 约束高风险业务边界，用 Agent 处理不确定的局部决策。不要把可确定的业务规则全部交给 Prompt。</div>
+
   <div class="ch-nav">
-    <a data-target="ch3">← 上一章：Agent 建模</a>
-    <a data-target="ch5">下一章：Prompt Engineering →</a>
+    <a data-target="ch3">← 上一项：Agent 领域模型与对象关系</a>
+    <a data-target="ch5">下一项：Prompt、Structured Interaction 与 Context Contract →</a>
   </div>
 </article>
 </section>
@@ -2410,9 +2444,36 @@ Determine Safe Resume Point（找到下一个可安全继续的步骤）
 Resume from Safe Point（避免重复执行已成功的副作用步骤）</pre>
   <p>这需要 Runtime 维护一个 <strong>Side Effect Registry</strong>：每次工具成功执行后，在事件日志中记录一条 <code class="ic">ToolCompleted</code> 事件，恢复时先查询该事件日志，再决定是否需要重新执行。这与第 19 章的 Idempotency 和 Side-effect Ledger 是同一体系的不同层次。</p>
 
+  <h2 class="sec" id="ch11-12">11.12 State Concurrency 与 Execution Ownership</h2>
+  <p>持久化状态并不自动保证安全恢复。多个 Runtime、重试 worker、人工回调和定时唤醒可能同时触碰同一个 Task，因此平台必须显式定义执行所有权和并发控制。</p>
+  <table class="st">
+    <thead><tr><th>机制</th><th>解决的问题</th><th>推荐规则</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Optimistic Lock</strong></td><td>两个执行者同时更新 Task State</td><td>使用 state_version，版本不匹配时拒绝写入并重新加载</td></tr>
+      <tr><td><strong>Execution Lease</strong></td><td>多个 Worker 同时执行同一 Task</td><td>领取 Task 时设置 owner、lease_id、expires_at</td></tr>
+      <tr><td><strong>Fencing Token</strong></td><td>旧 Worker 在 Lease 过期后仍继续写入</td><td>所有外部写操作携带单调递增 token，旧 token 必须被拒绝</td></tr>
+      <tr><td><strong>Compare-and-Swap</strong></td><td>审批、取消、恢复等竞争状态转换</td><td>状态转换必须声明 expected_state，并原子提交</td></tr>
+      <tr><td><strong>Idempotent Wake-up</strong></td><td>Timer 或外部事件重复唤醒任务</td><td>以 event_id / wakeup_id 去重，不能创建重复 Step</td></tr>
+    </tbody>
+  </table>
+  <pre class="cb">Acquire Task
+  ↓
+Read state_version = 41
+  ↓
+Acquire lease + fencing_token = 108
+  ↓
+Execute one bounded step
+  ↓
+Commit State where version = 41 and token = 108
+  ↓
+State version = 42
+  ↓
+Release lease</pre>
+  <div class="callout warn"><b>恢复前先夺取所有权</b>Recovery、Resume、Human Action 和 Timer Wake-up 都不能直接修改业务状态。它们必须先获取有效 Lease，验证任务版本、Agent Release、Policy 和副作用账本，再执行状态转换。</div>
+
   <div class="ch-nav">
-    <a data-target="ch10">← 上一章：Policy 与安全</a>
-    <a data-target="ch12">下一章：Task 与 Scheduling →</a>
+    <a data-target="ch10">← 上一项：Identity、Policy 与 Authorization</a>
+    <a data-target="ch12">下一项：Task、Scheduling 与 Human Control →</a>
   </div>
 </article>
 </section>
@@ -2607,9 +2668,37 @@ Side-effect Ledger 快照（记录目前已发生的副作用）
 Agent 继续执行（或任务结束）</pre>
   <div class="callout danger"><b>Takeover 后的 State 同步</b>人工直接操作业务系统后，Business State 已变更，但 Agent 的 Execution State 可能未同步。Resume 前必须更新 State，否则 Agent 可能重复执行人工已完成的步骤——与第 19 章的副作用事务问题本质相同，必须通过 Side-effect Ledger 记录人工操作的副作用。</div>
 
+  <h2 class="sec" id="ch12-10">12.10 Durable Timer 与任务唤醒</h2>
+  <p>长任务不能依赖 Runtime 进程中的 <code class="ic">sleep</code>、channel 或内存定时器。等待审批、等待外部回调、延迟重试和 Deadline 都必须持久化为可恢复的等待状态。</p>
+  <pre class="cb">Task RUNNING
+   ↓
+Persist WAITING state
+   ↓
+Create Durable Timer / External Event Subscription
+   ↓
+Runtime 可以安全退出或迁移
+   ↓
+Timer 到期 / Event 到达
+   ↓
+Acquire task lease + validate version
+   ↓
+Append Wakeup event
+   ↓
+Resume from checkpoint</pre>
+  <table class="st">
+    <thead><tr><th>等待类型</th><th>持久化内容</th><th>恢复要求</th></tr></thead>
+    <tbody>
+      <tr><td>人工审批</td><td>approval_id、task_id、step_id、expires_at、审批策略</td><td>重复回调幂等；超时动作明确</td></tr>
+      <tr><td>外部回调</td><td>subscription_id、callback_type、deadline、校验凭证</td><td>验证来源、去重事件、过期回调拒绝</td></tr>
+      <tr><td>延迟重试</td><td>retry_count、next_attempt_at、backoff_policy</td><td>重启后仍按原预算和策略执行</td></tr>
+      <tr><td>定时 Automation</td><td>schedule_id、workflow_version、trigger_cursor</td><td>避免重复创建实例，支持暂停和恢复</td></tr>
+    </tbody>
+  </table>
+  <div class="callout danger"><b>Timer 不是业务状态</b>“等待 30 分钟”只是唤醒条件，真正需要恢复的是 Task / Step / Approval / Side-effect 的持久化状态。Timer 到期后必须重新获取执行 Lease，并再次检查 Policy、版本和业务状态。</div>
+
   <div class="ch-nav">
-    <a data-target="ch11">← 上一章：Agent Runtime</a>
-    <a data-target="ch13">下一章：Quality Engineering →</a>
+    <a data-target="ch11">← 上一项：Agent Runtime 与 Durable Execution</a>
+    <a data-target="ch19">下一项：Agent Transaction 与 Side-effect Safety →</a>
   </div>
 </article>
 </section>
@@ -3981,9 +4070,36 @@ Quality Gate（所有门禁通过?）
   </table>
   <div class="callout tip"><b>版本固定</b>运行中的 Task 必须固定在创建时的 Agent 版本，防止 Canary 切换导致同一 Task 跨版本执行（不同 Prompt/Policy 在同一任务中混用）。Task 创建时记录 <code class="ic">agent_release_version</code>，执行时严格使用该版本的所有组件。</div>
 
+  <h2 class="sec" id="ch18-7">18.7 Platform Operating Model 与治理</h2>
+  <p>企业级 Agent 平台不仅需要技术架构，还需要明确的运营责任和变更权边界。每个 Agent、Tool、Model、Policy、Knowledge Space 和 Runtime 都必须有可追溯的 Owner。</p>
+  <table class="st">
+    <thead><tr><th>角色</th><th>主要责任</th><th>关键审批</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Agent Owner</strong></td><td>目标、Prompt、Capability、业务结果和质量指标</td><td>Agent Release、版本回滚</td></tr>
+      <tr><td><strong>Platform Owner</strong></td><td>Runtime、Gateway、Registry、Quota 和平台 SLO</td><td>平台配置、容量和架构变更</td></tr>
+      <tr><td><strong>Security Owner</strong></td><td>Identity、Policy、Secret、Tool / MCP 安全审查</td><td>高风险 Capability、权限放宽、紧急封锁</td></tr>
+      <tr><td><strong>Data Owner</strong></td><td>Knowledge、Memory、PII、Retention 和数据边界</td><td>数据源接入、跨租户共享、删除策略</td></tr>
+      <tr><td><strong>SRE / On-call</strong></td><td>SLO、告警、Incident、Capacity、DR 和恢复演练</td><td>生产变更、故障切换、Error Budget 使用</td></tr>
+    </tbody>
+  </table>
+  <div class="flow">
+    <span class="n">Development</span><span class="sep">→</span>
+    <span class="n">Test</span><span class="sep">→</span>
+    <span class="n">Staging</span><span class="sep">→</span>
+    <span class="n">Canary</span><span class="sep">→</span>
+    <span class="n">Production</span><span class="sep">→</span>
+    <span class="n">Retire</span>
+  </div>
+  <ul>
+    <li>每次 Prompt、Model、Tool、Policy、Knowledge 或 Runtime 变更都必须产生 Release Manifest。</li>
+    <li>高风险变更需要双人审批、变更原因、影响范围、回滚方案和审计记录。</li>
+    <li>紧急封锁可以绕过常规发布流程，但必须事后补齐审批和复盘。</li>
+    <li>运行中的 Task 固定使用创建时的 Agent Release；平台配置更新不能隐式改变执行中的任务。</li>
+  </ul>
+
   <div class="ch-nav">
-    <a data-target="ch17">← 上一章：意图识别与路由</a>
-    <a data-target="ch19">下一章：Agent Transaction →</a>
+    <a data-target="ch24">← 上一项：Agent Platform Architecture</a>
+    <a data-target="ch27">下一项：Multi-Tenancy、Data Governance 与 Lineage →</a>
   </div>
 </article>
 </section>
@@ -4819,6 +4935,63 @@ trust_policies:
   </table>
   <div class="callout tip"><b>从 Multi-Agent 到 A2A 的演进路径</b>建议先用第 4 章的 Multi-Agent 范式在同一平台内实现协作，验证业务逻辑后，再将高复用的 Worker Agent 提取为独立 A2A 服务，对外暴露 Agent Card。不要一开始就设计完整的 A2A 体系——过早引入 A2A 会带来不必要的分布式复杂性。</div>
 
+  <h2 class="sec" id="ch23-8">23.8 Experience Plane 与 A2UI</h2>
+  <p>企业级 Agent 不应直接操作具体 UI，而应通过 Experience Plane 将 Agent 的状态、事件和可交互能力转换为客户端可渲染的界面描述。A2UI / AG-UI 解决的是 Agent 与用户界面的交互契约，不是 Runtime 内部的业务执行。</p>
+  <div class="flow">
+    <span class="n">Agent Runtime</span><span class="sep">→</span>
+    <span class="n">Domain Event / Artifact / Approval</span><span class="sep">→</span>
+    <span class="n">Experience Adapter</span><span class="sep">→</span>
+    <span class="n">UI Spec / Stream Event</span><span class="sep">→</span>
+    <span class="n">Render SDK</span>
+  </div>
+  <table class="st">
+    <thead><tr><th>边界</th><th>职责</th><th>不能承担的职责</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Agent Runtime</strong></td><td>产生业务结果、状态变更、审批请求和 Artifact 引用</td><td>不拼装页面、不直接依赖浏览器组件</td></tr>
+      <tr><td><strong>Experience Adapter</strong></td><td>把领域事件转换为稳定的 UI Schema 和流式事件</td><td>不绕过 Runtime 执行工具或修改业务状态</td></tr>
+      <tr><td><strong>Render SDK</strong></td><td>渲染组件、管理交互状态、提交用户 Action</td><td>不自行决定权限或直接调用高风险业务 API</td></tr>
+    </tbody>
+  </table>
+  <p>Experience Event 至少应包含 <code class="ic">event_id</code>、<code class="ic">task_id</code>、<code class="ic">sequence</code>、<code class="ic">type</code>、<code class="ic">payload</code>、<code class="ic">occurred_at</code> 和 <code class="ic">schema_version</code>。客户端断线重连时，应根据 <code class="ic">task_id + sequence</code> 补拉事件，而不是依赖重新执行 Agent。</p>
+  <div class="callout warn"><b>UI Action 不是可信指令</b>用户界面提交的按钮、表单和确认动作都必须重新经过身份校验、Tenant 校验、Policy 检查和幂等校验。前端隐藏按钮不能代替后端授权，UI 中携带的参数也不能直接作为业务事实。</div>
+
+  <h2 class="sec" id="ch23-9">23.9 Platform API Contract</h2>
+  <p>平台入口应统一定义同步交互和异步任务两种契约。短任务可以同步返回结果；长任务、需要人工审批或需要外部回调的任务，应立即返回 <code class="ic">202 Accepted</code> 和稳定的 <code class="ic">task_id</code>。</p>
+  <pre class="cb">POST /api/v1/tasks
+Idempotency-Key: req_20260927_001
+X-Tenant-ID: tenant_acme
+
+{
+  "agent_id": "agent_refund_v2",
+  "session_id": "sess_xyz",
+  "input": { "order_id": "10001" },
+  "deadline": "2026-09-27T10:10:00Z"
+}
+
+→ 202 Accepted
+{
+  "task_id": "task_abc123",
+  "session_id": "sess_xyz",
+  "status": "queued",
+  "trace_id": "trace_789",
+  "links": {
+    "status": "/api/v1/tasks/task_abc123",
+    "events": "/api/v1/tasks/task_abc123/events"
+  }
+}</pre>
+  <table class="st">
+    <thead><tr><th>接口</th><th>用途</th><th>关键约束</th></tr></thead>
+    <tbody>
+      <tr><td><code class="ic">POST /tasks</code></td><td>创建任务</td><td>必须支持幂等提交、Tenant 隔离和 Agent 版本固定</td></tr>
+      <tr><td><code class="ic">GET /tasks/{id}</code></td><td>查询任务状态和结果</td><td>结果可分页或通过 Artifact 引用返回</td></tr>
+      <tr><td><code class="ic">GET /tasks/{id}/events</code></td><td>SSE / WebSocket 订阅进度</td><td>支持 cursor、断线重连和事件补偿</td></tr>
+      <tr><td><code class="ic">POST /tasks/{id}/cancel</code></td><td>取消任务</td><td>必须幂等，并明确已发生副作用的处理方式</td></tr>
+      <tr><td><code class="ic">POST /tasks/{id}/resume</code></td><td>恢复暂停任务</td><td>只允许合法状态转换和授权主体调用</td></tr>
+      <tr><td><code class="ic">POST /tasks/{id}/actions</code></td><td>提交用户或人工 Action</td><td>Action 必须绑定 task、step、版本和幂等键</td></tr>
+    </tbody>
+  </table>
+  <p>所有 API 应使用统一错误信封，至少包含 <code class="ic">code</code>、<code class="ic">message</code>、<code class="ic">retryable</code>、<code class="ic">trace_id</code> 和 <code class="ic">details</code>。HTTP 状态码只能表示传输层结果，不能代替 Task 的业务状态。</p>
+
   <div class="ch-nav">
     <a data-target="ch22">← 上一章：Agent SRE</a>
     <a data-target="ch24">下一章：Platform Architecture →</a>
@@ -5130,9 +5303,38 @@ Skill Registry
     <li><strong>Task Worker</strong>：与 Runtime Pool 同步扩缩，保证消费速度与处理速度匹配</li>
   </ul>
 
+  <h2 class="sec" id="ch24-11">24.11 Event Contract 与 Delivery Semantics</h2>
+  <p>Event Bus 不只是消息传输组件，而是 Runtime、Observability、Evaluation、Audit、FinOps 和 Experience Plane 之间的公共契约。事件必须可验证、可版本化、可重放。</p>
+  <pre class="cb">{
+  "event_id": "evt_01J...",
+  "event_type": "agent.task.completed",
+  "schema_version": "1.2",
+  "tenant_id": "tenant_acme",
+  "agent_id": "agent_refund_v2",
+  "task_id": "task_abc123",
+  "trace_id": "trace_789",
+  "correlation_id": "corr_456",
+  "causation_id": "evt_previous",
+  "sequence": 42,
+  "occurred_at": "2026-09-27T10:00:00Z",
+  "payload": { "status": "completed", "result_ref": "artifact_xyz" }
+}</pre>
+  <table class="st">
+    <thead><tr><th>语义</th><th>平台要求</th></tr></thead>
+    <tbody>
+      <tr><td><strong>At-least-once</strong></td><td>消费者必须幂等；以 event_id 或业务幂等键去重</td></tr>
+      <tr><td><strong>Ordering</strong></td><td>按 aggregate_id / task_id 分区，需要顺序的事件不能跨分区无序消费</td></tr>
+      <tr><td><strong>Outbox</strong></td><td>业务状态和待发布事件在同一事务中提交，避免状态已变更但事件丢失</td></tr>
+      <tr><td><strong>Schema Evolution</strong></td><td>事件只追加兼容字段；破坏性变更必须升级 schema_version</td></tr>
+      <tr><td><strong>Replay / DLQ</strong></td><td>失败事件进入 DLQ；修复消费者后可按范围重放，不能直接修改历史事件</td></tr>
+      <tr><td><strong>Backpressure</strong></td><td>消费延迟、队列堆积和丢弃策略必须可观测并触发告警</td></tr>
+    </tbody>
+  </table>
+  <div class="callout note"><b>四类日志必须分开</b>Event Log 用于状态重建，Event Bus 用于服务解耦，Audit Log 用于合规追溯，SSE / WebSocket 用于用户体验。它们可以共享事件来源，但不能用其中一种替代其他三种。</div>
+
   <div class="ch-nav">
-    <a data-target="ch23">← 上一章：Agent-to-Agent</a>
-    <a data-target="ch25">下一章：Agent SDK →</a>
+    <a data-target="ch23">← 上一项：Agent Protocols 与 Interoperability</a>
+    <a data-target="ch18">下一项：Registry、Configuration 与 Agent Lifecycle →</a>
   </div>
 </article>
 </section>
@@ -6078,7 +6280,7 @@ agent:
     { id: 'ch2',  title: '附录 A：Model API 与 Provider Compatibility' },
   ].map((chapter, index) => ({
     ...chapter,
-    num: `第${index + 1}项 · ${chapter.id.toUpperCase()}`,
+    num: `第${index + 1}章 · ${chapter.id.toUpperCase()}`,
   }));
 
   /* ── V4 分组：目录顺序与正文 section 顺序解耦，保留 chN 稳定锚点 ── */
@@ -6102,14 +6304,40 @@ agent:
   const progBarEl    = document.getElementById('prog-bar');
   const contentEl    = document.getElementById('content');
 
-  /* ── 从旧目录保留子节锚点，按 V4 元数据重新生成分组目录 ── */
-  function renderTOC() {
-    const legacySubmenus = {};
-    document.querySelectorAll('.toc-chapter').forEach(chapterEl => {
-      const sub = chapterEl.querySelector('.toc-sub');
-      legacySubmenus[chapterEl.dataset.ch] = sub ? sub.innerHTML : '';
+  /* ── 将稳定锚点 chN-M 转换为 V4 的可见章节号 ── */
+  function rewriteSectionIndexes() {
+    CHAPTERS.forEach((chapter, index) => {
+      const section = document.getElementById(chapter.id);
+      if (!section) return;
+      const displayChapter = index + 1;
+      section.querySelectorAll('h2.sec[id], h3.subsec[id]').forEach(heading => {
+        if (heading.id.indexOf(`${chapter.id}-`) !== 0) return;
+        const suffix = heading.id.slice(chapter.id.length + 1);
+        const title = heading.textContent.trim().replace(/^\d+\.\d+\s*/, '');
+        heading.textContent = `${displayChapter}.${suffix} ${title}`;
+      });
     });
+  }
 
+  /* ── 从正文标题生成子目录，编号使用 V4 展示顺序 ── */
+  function buildSubmenu(chId) {
+    const section = document.getElementById(chId);
+    const chapterIndex = CHAPTERS.findIndex(ch => ch.id === chId);
+    if (!section || chapterIndex < 0) return '';
+    const displayChapter = chapterIndex + 1;
+    return Array.from(section.querySelectorAll('h2.sec[id]'))
+      .filter(heading => heading.id.indexOf(`${chId}-`) === 0)
+      .map(heading => {
+        const suffix = heading.id.slice(chId.length + 1);
+        const title = heading.textContent.trim().replace(/^\d+\.\d+\s*/, '');
+        return `<li><a data-target="${heading.id}">${displayChapter}.${suffix} ${title}</a></li>`;
+      })
+      .join('');
+  }
+
+  /* ── 按 V4 元数据重新生成分组目录 ── */
+  function renderTOC() {
+    rewriteSectionIndexes();
     tocEl.innerHTML = TOC_GROUPS.map(group => {
       const items = group.ids.map(chId => {
         const chapter = CHAPTERS.find(ch => ch.id === chId);
@@ -6118,7 +6346,7 @@ agent:
         return `
           <div class="toc-chapter" data-ch="${chapter.id}">
             <a class="chlink" data-target="${chapter.id}"><span class="chnum">${index + 1}</span>${chapter.title}</a>
-            <ul class="toc-sub">${legacySubmenus[chapter.id] || ''}</ul>
+            <ul class="toc-sub">${buildSubmenu(chapter.id)}</ul>
           </div>`;
       }).join('');
       return `<div class="toc-group-label">${group.label}</div>${items}`;
@@ -6150,8 +6378,8 @@ agent:
         const prev = idx > 0 ? CHAPTERS[idx - 1] : null;
         const next = idx < TOTAL - 1 ? CHAPTERS[idx + 1] : null;
         nav.innerHTML = [
-          prev ? `<a data-target="${prev.id}">← 上一项：${prev.title}</a>` : '<span></span>',
-          next ? `<a data-target="${next.id}">下一项：${next.title} →</a>` : '<span></span>'
+          prev ? `<a data-target="${prev.id}">← 上一章 ${prev.num}：${prev.title}</a>` : '<span></span>',
+          next ? `<a data-target="${next.id}">下一章 ${next.num}：${next.title} →</a>` : '<span></span>'
         ].join('');
       }
     }
