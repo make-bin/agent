@@ -195,7 +195,7 @@
     <h1>🏗 企业级 Agent 开发手册</h1>
     <p>设计原则 · 工程规范 · 生产实践</p>
     <div class="meta">
-      <span class="tag">16 章</span>
+      <span class="tag">17 章</span>
       <span class="tag">OpenAI 协议</span>
       <span class="tag">MCP</span>
       <span class="tag">Quality</span>
@@ -417,13 +417,31 @@
       </ul>
     </div>
 
-  </div><!-- .toc -->
+    <div class="toc-group-label">专题</div>
+
+    <div class="toc-chapter" data-ch="ch17">
+      <a class="chlink" data-target="ch17"><span class="chnum">17</span> 意图识别与路由</a>
+      <ul class="toc-sub">
+        <li><a data-target="ch17-1">17.1 为什么需要独立的意图层</a></li>
+        <li><a data-target="ch17-2">17.2 生产级架构总览</a></li>
+        <li><a data-target="ch17-3">17.3 Intent Object 设计</a></li>
+        <li><a data-target="ch17-4">17.4 Intent Schema</a></li>
+        <li><a data-target="ch17-5">17.5 Intent Catalog</a></li>
+        <li><a data-target="ch17-6">17.6 三层识别策略</a></li>
+        <li><a data-target="ch17-7">17.7 Decision Engine</a></li>
+        <li><a data-target="ch17-8">17.8 多意图与上下文意图</a></li>
+        <li><a data-target="ch17-9">17.9 与 Agent Runtime 的连接</a></li>
+        <li><a data-target="ch17-10">17.10 Intent Evaluation</a></li>
+      </ul>
+    </div>
+
+    </div><!-- .toc -->
 </nav>
 
 <div id="content">
   <div class="topbar">
     <span class="bc" id="breadcrumb"><span>第一章</span><span class="bc-sep">·</span><span>什么是 Agent</span></span>
-    <span class="progress-wrap"><span id="prog-text">1 / 16 章</span><span class="progress-bar"><div id="prog-bar" style="width:6.25%"></div></span></span>
+    <span class="progress-wrap"><span id="prog-text">1 / 17 章</span><span class="progress-bar"><div id="prog-bar" style="width:5.88%"></div></span></span>
   </div>
 
 <!-- ==================== CHAPTER 1 ==================== -->
@@ -896,7 +914,7 @@ data: [DONE]</pre>
       <tr><td><strong>Orchestrator-Worker</strong></td><td>主 Agent 拆解任务分配给多个 Worker，汇总结果</td><td>任务可明确拆分、子任务相互独立的批量处理</td></tr>
       <tr><td><strong>Pipeline（流水线）</strong></td><td>Agent A 的输出直接作为 Agent B 的输入</td><td>数据清洗→提取→分析→报告等线性流程</td></tr>
       <tr><td><strong>Generator-Critic</strong></td><td>生成 Agent 输出，评审 Agent 批判并反馈，循环修订</td><td>高质量内容生成、代码审查、方案评估</td></tr>
-      <tr><td><strong>Router</strong></td><td>入口 Agent 分类路由，转给最合适的专职 Agent</td><td>多类型任务统一入口，如客服意图分发</td></tr>
+      <tr><td><strong>Router</strong></td><td>入口 Agent 做意图分类路由，将请求转给最合适的专职 Agent、Workflow 或 Tool（不限于 Agent 间路由）</td><td>多类型任务的统一入口，如客服意图分发；生产级完整设计见第 17 章</td></tr>
     </tbody>
   </table>
   <div class="callout warn"><b>不应为了 Multi-Agent 而 Multi-Agent</b>每个子 Agent 都是独立 LLM 调用，token 总消耗是所有子调用之和。只有任务复杂度真正超出单 Agent 能力时才引入 Multi-Agent，避免过度设计。</div>
@@ -2760,6 +2778,335 @@ Agent 回复：{agent_response}
 
   <div class="ch-nav">
     <a data-target="ch15">← 上一章：评估与测试</a>
+    <a data-target="ch17">下一章：意图识别与路由 →</a>
+  </div>
+</article>
+</section>
+
+<!-- ==================== CHAPTER 17 ==================== -->
+<section class="ch-section" id="ch17">
+<article class="chapter">
+  <div class="ch-eyebrow">Chapter 17</div>
+  <h1 class="ch-title">意图识别与路由</h1>
+  <p class="ch-lead">意图识别不是"把用户话术分类得多准"，而是 Agent 平台的上游决策层——准确理解用户想完成什么，判断是否确定，补充缺失信息，选择执行模式，路由到正确的 Agent / Workflow / Tool。它在请求链路中位于 Agent Runtime 的上游，是 Ch4 中 Router 范式的生产级落地。</p>
+
+  <h2 class="sec" id="ch17-1">17.1 为什么需要独立的意图理解层</h2>
+  <p>最直觉的做法是在每个 Agent 的 Prompt 里写"如果用户说退款就执行退款逻辑"——这在 Demo 里够用，但在生产中会带来以下问题：</p>
+  <ul>
+    <li><strong>路由逻辑散落在各 Agent 里</strong>，新增 Agent 需要修改多处</li>
+    <li><strong>无法处理多意图</strong>（"帮我查物流，如果延迟了帮我退款"）</li>
+    <li><strong>无法感知不确定性</strong>——模型猜一个意图，系统直接执行</li>
+    <li><strong>OOD（Out-of-Domain）无法识别</strong>，陌生请求会被强行分类</li>
+    <li><strong>无法复用</strong>——意图和路由的映射关系无法跨 Agent 共享</li>
+  </ul>
+  <div class="callout note"><b>Intent ≠ Routing</b>Intent 回答"用户想做什么"；Routing 回答"谁来做、怎么做、用哪个 Workflow"。两者分离，Agent 平台才能独立演进，而不被意图分类模型绑死。</div>
+
+  <h2 class="sec" id="ch17-2">17.2 生产级架构总览</h2>
+  <pre class="cb">                    User Request
+                         │
+                         ▼
+              ┌─────────────────────┐
+              │  Input Gateway      │
+              │  鉴权 / 限流 / 安全  │
+              └──────────┬──────────┘
+                         │
+                         ▼
+              ┌─────────────────────┐
+              │  Context Builder    │
+              │  当前 Query          │
+              │  Session / Summary  │
+              │  User Context       │
+              │  当前 Task State     │
+              └──────────┬──────────┘
+                         │
+                         ▼
+              ┌─────────────────────────────┐
+              │  Intent Understanding       │
+              │                             │
+              │  Rule Classifier            │
+              │  Semantic Matcher           │
+              │  LLM Classifier             │
+              └──────────┬──────────────────┘
+                         │
+                         ▼
+              ┌─────────────────────────────┐
+              │  Intent Decision Engine     │
+              │  confidence / margin        │
+              │  OOD / multi-intent / risk  │
+              └──────────┬──────────────────┘
+                         │
+          ┌──────────────┼──────────────┐
+          ▼              ▼              ▼
+       Execute        Clarify        Fallback
+          │                          / Human
+          ▼
+   ┌──────────────┐
+   │ Routing      │
+   └──────┬───────┘
+          │
+   ┌──────┼──────────┐
+   ▼      ▼          ▼
+ Agent  Workflow    Tool</pre>
+
+  <h2 class="sec" id="ch17-3">17.3 Intent Object 设计</h2>
+  <p>不要只返回一个字符串标签，而应该返回完整的 <strong>Intent Object</strong>，包含执行决策所需的所有信息：</p>
+  <div class="grid2">
+    <div class="mc">
+      <h4>❌ 过于简单</h4>
+      <pre class="cb" style="margin:6px 0 0;font-size:11.5px;">{ "intent": "refund" }</pre>
+    </div>
+    <div class="mc">
+      <h4>✅ 生产级 Intent Object</h4>
+      <pre class="cb" style="margin:6px 0 0;font-size:11.5px;">{
+  "intent": {
+    "domain": "order",
+    "action": "delivery_inquiry",
+    "sub_action": "late_delivery"
+  },
+  "secondary_intents": [
+    { "domain": "refund", "action": "apply_refund" }
+  ],
+  "entities": { "order_id": "12345" },
+  "constraints": { "condition": "delivery_overdue" },
+  "execution_mode": "workflow",
+  "confidence": 0.94,
+  "ambiguity": 0.06,
+  "requires_clarification": false
+}</pre>
+    </div>
+  </div>
+  <p>关键字段说明：</p>
+  <table class="st">
+    <thead><tr><th>字段</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code class="ic">intent</code></td><td>层次化意图 ID（domain → action → sub_action）</td></tr>
+      <tr><td><code class="ic">secondary_intents</code></td><td>同一请求中的次要意图，支持多意图场景</td></tr>
+      <tr><td><code class="ic">entities</code></td><td>从请求中抽取的参数（订单号、日期等）</td></tr>
+      <tr><td><code class="ic">execution_mode</code></td><td>建议的执行范式：tool_call / workflow / agent</td></tr>
+      <tr><td><code class="ic">confidence</code></td><td>意图识别置信度（需校准，非 LLM 自报）</td></tr>
+      <tr><td><code class="ic">ambiguity</code></td><td>歧义程度，与 confidence 共同驱动 Decision Engine</td></tr>
+      <tr><td><code class="ic">requires_clarification</code></td><td>是否需要追问用户</td></tr>
+    </tbody>
+  </table>
+
+  <h2 class="sec" id="ch17-4">17.4 Intent Schema</h2>
+  <p>企业 Agent 平台统一定义的完整 Intent Schema：</p>
+  <pre class="cb">{
+  <span class="key">"intent_id"</span>:   <span class="str">"order.delivery.late"</span>,   <span class="cm">// 层次化 ID</span>
+  <span class="key">"domain"</span>:     <span class="str">"order"</span>,
+  <span class="key">"action"</span>:     <span class="str">"delivery_inquiry"</span>,
+  <span class="key">"operation"</span>:  <span class="str">"query"</span>,
+
+  <span class="key">"entities"</span>:   { <span class="key">"order_id"</span>: <span class="str">"12345"</span> },
+  <span class="key">"constraints"</span>: { <span class="key">"status"</span>: <span class="str">"overdue"</span> },
+  <span class="key">"goal"</span>:        <span class="str">"查询订单延迟原因"</span>,
+
+  <span class="key">"execution_mode"</span>: <span class="str">"workflow"</span>,
+  <span class="key">"required_capabilities"</span>: [<span class="str">"order.query"</span>, <span class="str">"shipping.query"</span>],
+
+  <span class="key">"confidence"</span>: <span class="num">0.94</span>,
+  <span class="key">"ambiguity"</span>:  <span class="num">0.03</span>,
+  <span class="key">"ood"</span>:        <span class="num">false</span>,
+  <span class="key">"multi_intent"</span>:        <span class="num">false</span>,
+  <span class="key">"requires_clarification"</span>: <span class="num">false</span>
+}</pre>
+  <p>intent_id 应使用层次化命名，支持平台随业务增长不断扩展：</p>
+  <pre class="cb">order
+ ├── query
+ │    ├── order_status
+ │    └── delivery_status
+ └── refund
+      ├── refund_policy
+      ├── refund_apply
+      └── refund_cancel</pre>
+  <div class="callout tip"><b>execution_mode 直接绑定执行范式</b>意图识别结果中带上 <code class="ic">execution_mode</code>，可以直接驱动 Ch4 中的范式选择。简单查询 → tool_call；业务流程 → workflow；复杂分析 → agent。这让 Agent 平台架构非常清晰。</div>
+
+  <h2 class="sec" id="ch17-5">17.5 Intent Catalog</h2>
+  <p>生产级意图识别最大的问题不是模型，而是 <strong>Intent Catalog 怎么设计</strong>。平台应维护统一的意图目录：</p>
+  <table class="st">
+    <thead><tr><th>Intent ID</th><th>描述</th><th>Required Entity</th><th>Agent</th><th>Workflow</th></tr></thead>
+    <tbody>
+      <tr><td><code class="ic">order.query</code></td><td>查询订单</td><td>order_id</td><td>OrderAgent</td><td>OrderQuery</td></tr>
+      <tr><td><code class="ic">order.cancel</code></td><td>取消订单</td><td>order_id</td><td>OrderAgent</td><td>CancelOrder</td></tr>
+      <tr><td><code class="ic">refund.apply</code></td><td>申请退款</td><td>order_id, reason</td><td>RefundAgent</td><td>RefundWorkflow</td></tr>
+      <tr><td><code class="ic">refund.query</code></td><td>查询退款进度</td><td>order_id</td><td>RefundAgent</td><td>RefundQuery</td></tr>
+      <tr><td><code class="ic">logistics.query</code></td><td>查询物流</td><td>tracking_no</td><td>LogisticsAgent</td><td>Tracking</td></tr>
+    </tbody>
+  </table>
+  <p>Intent Catalog 本质上是 <strong>Agent 平台的业务契约</strong>。新增一个业务 Agent 时，不需要修改整个 Router，只需要：注册 Intent → 注册 Capability → 绑定 Agent/Workflow → 增加 Examples → Eval → 上线。</p>
+  <p>每个 Intent 注册时配套定义 Examples 和 Negative Examples：</p>
+  <pre class="cb">intent:
+  id: refund.apply
+  description: 用户希望针对指定订单申请退款
+  examples:
+    - 我要退款
+    - 帮我退掉这个订单
+    - 我不想要了，申请退款
+  negative_examples:
+    - 退款什么时候到账      <span class="cm"># → refund.query</span>
+    - 退款规则是什么        <span class="cm"># → refund.policy</span>
+  entities: [order_id, refund_reason]
+  execution: { mode: workflow, workflow: RefundWorkflow }
+  risk: { level: high }
+  clarification:
+    required_entities: [order_id]</pre>
+
+  <h2 class="sec" id="ch17-6">17.6 三层识别策略</h2>
+  <p><strong>生产环境不要一上来就调用大模型。</strong>推荐三层漏斗，从确定性最高、成本最低的开始：</p>
+  <div class="flow">
+    <span class="n">Rule Engine（关键词/正则/业务参数）</span><span class="sep">→</span>
+    <span class="n">可确定？</span>
+  </div>
+  <div class="flow">
+    <span class="n" style="background:#dcfce7;border-color:#86efac;color:#14532d">Yes → 直接路由</span>
+    <span class="sep">/</span>
+    <span class="n">No → Semantic Matcher（Intent 向量检索）</span>
+  </div>
+  <div class="flow">
+    <span class="n">置信度高？</span>
+    <span class="sep">/</span>
+    <span class="n" style="background:#dcfce7;border-color:#86efac;color:#14532d">Yes → 路由</span>
+    <span class="sep">/</span>
+    <span class="n">No → LLM Classifier（结构化输出）</span>
+  </div>
+  <table class="st">
+    <thead><tr><th>层级</th><th>实现方式</th><th>优点</th><th>触发条件</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Layer 1：确定性规则</strong></td><td>关键词匹配、正则、业务参数直接识别（如 URL 含 order_id 且动作=cancel）</td><td>零延迟、零成本、100% 准确</td><td>稳定的、高频的业务模式</td></tr>
+      <tr><td><strong>Layer 2：语义匹配</strong></td><td>把用户 Query 向量化，与 Intent Catalog 中每个 Intent 的 Examples Embedding 做相似度检索，取 Top-K</td><td>低成本、低延迟</td><td>规则无法覆盖时</td></tr>
+      <tr><td><strong>Layer 3：LLM 分类</strong></td><td>只在前两层不确定时调用 LLM，使用 Structured Output 强制返回 Intent Object</td><td>处理模糊、复杂、新颖请求</td><td>前两层置信度不足时</td></tr>
+    </tbody>
+  </table>
+  <div class="callout note"><b>Semantic Matching：不要只看 Top1</b>同时关注 <code class="ic">margin = Top1 Score - Top2 Score</code>。如果 Top1=0.82，Top2=0.81，虽然分数看起来高，但 margin 只有 0.01——实际上高度不确定，应该继续往 LLM 层走，而不是直接路由。</div>
+
+  <h2 class="sec" id="ch17-7">17.7 Decision Engine</h2>
+  <p>最终决策不是简单的 <code class="ic">if confidence &gt; 0.8: route()</code>，而是综合多个信号：</p>
+  <pre class="cb">Decision Inputs:
+  Top1 Intent + confidence
+  Margin (Top1 - Top2)
+  OOD Score（是否超出已知 Intent 域）
+  Multi-Intent（是否存在多个意图）
+  Risk Level（Intent Catalog 中的风险等级）
+  Missing Required Entities（必填实体是否缺失）</pre>
+  <p>三种决策结果及触发条件：</p>
+  <table class="st">
+    <thead><tr><th>决策结果</th><th>触发条件示例</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Execute（直接执行）</strong></td>
+        <td>confidence=0.95，margin=0.24，OOD=false，risk=low → 直接路由到 Agent/Workflow</td>
+      </tr>
+      <tr>
+        <td><strong>Clarify（追问用户）</strong></td>
+        <td>confidence=0.78，margin=0.03（Top1 ≈ Top2）→ 问"您是想申请退款，还是查询退款进度？"；或 required_entities 缺失 → 问"请提供订单号"</td>
+      </tr>
+      <tr>
+        <td><strong>Fallback / Human</strong></td>
+        <td>confidence=0.35，OOD=true → 转 General Agent 或人工</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="callout warn"><b>不要信任 LLM 自报的 confidence</b>LLM 生成的 <code class="ic">confidence: 0.98</code> 并不代表 98% 正确，需要通过离线标注数据对每个 Intent 分别进行 Confidence Calibration，建立校准曲线后再设置阈值。</div>
+  <div class="callout note"><b>这里的 Confidence 与第 13 章的 Confidence 是两个不同环节</b>本节（Ch17.7）的 Confidence 是<strong>意图分类</strong>置信度——"我理解用户想做什么"这件事有多确定，发生在请求处理的最上游。第 13 章（Quality Engineering）的 Confidence 是 Agent <strong>输出结果质量</strong>置信度——"Agent 给出的结论是否可信"，发生在任务执行完成之后。同一套机制（置信度驱动决策），两个完全不同的位置。</div>
+
+  <h2 class="sec" id="ch17-8">17.8 多意图与上下文意图</h2>
+  <h3 class="subsec">多意图（Multi-Intent）</h3>
+  <p>单条请求可能含多个意图，且存在依赖关系：</p>
+  <p>用户："帮我查一下订单什么时候到，如果今天还不到就帮我退款。"</p>
+  <pre class="cb"><span class="cm">// 不是 refund，而是一个 Intent Graph</span>
+Intent 1: logistics.query
+Intent 2: refund.apply
+Dependency: refund.apply depends_on logistics.query.result (overdue = true)
+
+              User Request
+                   │
+          ┌────────┴────────┐
+          ▼                 ▼
+   LogisticsQuery       RefundCheck
+          │                 │
+          └────────┬────────┘
+                   ▼
+             overdue = true?
+                   │ Yes
+                   ▼
+             RefundApply</pre>
+  <p>Intent Layer 的输出在多意图场景下应该是 <strong>Intent Graph</strong>，而不只是单个 Intent Label。</p>
+
+  <h3 class="subsec">上下文意图（Context Intent）</h3>
+  <p>用户的第二句话可能依赖上一轮对话：</p>
+  <pre class="cb">用户：帮我查订单 12345
+Agent：订单 12345 当前正在运输中。
+用户：那什么时候能到？
+
+<span class="cm">// "什么时候能到" 单独看几乎没有完整意图
+// 结合 Previous Intent = logistics.query + entity.order_id = "12345"
+// 正确识别为：logistics.estimated_arrival</span></pre>
+  <p>因此 Intent Recognition 的输入不能只是当前 Query，而应该是：</p>
+  <pre class="cb">Intent Input = Current Query
+             + Conversation Summary
+             + Previous Intent
+             + Current Task State
+             + User Context (偏好、历史)</pre>
+
+  <h2 class="sec" id="ch17-9">17.9 与 Agent Runtime 的连接</h2>
+  <p>Intent Layer 在整个系统中的位置：</p>
+  <pre class="cb">A2UI Gateway（或任意入口）
+         │
+         ▼
+  Agent Runtime
+         │
+         ▼
+  Intent &amp; Routing Layer    ← 这一章讲的内容
+         │
+  ┌──────┼──────────┐
+  ▼      ▼          ▼
+Simple  Workflow   Agent
+Task    Task       Task
+  │      │          │
+  ▼      ▼          ▼
+Tool  Workflow   Agent Graph
+      Runtime    Runtime</pre>
+  <div class="callout tip"><b>Intent Layer 不负责执行</b>它只做 Understand → Decide → Route，真正执行交给 Agent Runtime（Ch11）、Workflow Runtime、Tool Runtime。这是最重要的边界原则。</div>
+  <p>Intent Layer 与 Ch4 范式选择的对应：</p>
+  <table class="st">
+    <thead><tr><th>Intent 场景</th><th>execution_mode</th><th>对应 Ch4 范式</th></tr></thead>
+    <tbody>
+      <tr><td>查询订单状态</td><td>tool_call</td><td>Direct（简单 ReAct）</td></tr>
+      <tr><td>帮我分析订单延迟原因</td><td>workflow</td><td>Workflow</td></tr>
+      <tr><td>分析最近一个月订单趋势并给出方案</td><td>agent</td><td>Planning + Multi-Agent</td></tr>
+      <tr><td>高风险操作（退款 &gt; 500 元）</td><td>workflow + human_approval</td><td>Workflow + HITL（Ch12）</td></tr>
+    </tbody>
+  </table>
+
+  <h2 class="sec" id="ch17-10">17.10 Intent Evaluation</h2>
+  <p>生产系统和 Demo 最大的区别之一：必须建立完整的 Intent Evaluation 体系。</p>
+  <table class="st">
+    <thead><tr><th>指标</th><th>含义</th><th>关注原因</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Intent Accuracy</strong></td><td>意图是否正确</td><td>基础准确率</td></tr>
+      <tr><td><strong>Precision / Recall</strong></td><td>每个 Intent 的精准率和召回率</td><td>发现哪个 Intent 最容易混淆</td></tr>
+      <tr><td><strong>Top-K Accuracy</strong></td><td>正确 Intent 是否进入 Top-K 候选</td><td>评估 Semantic Matching 质量</td></tr>
+      <tr><td><strong>OOD Recall</strong></td><td>陌生意图能否被识别为 OOD</td><td>防止把 OOD 强行分类</td></tr>
+      <tr><td><strong>Clarification Rate</strong></td><td>需要追问的比例</td><td>过高说明 Intent Catalog 不完整</td></tr>
+      <tr><td><strong>Wrong Route Rate</strong></td><td>路由到错误 Agent/Workflow 的比例</td><td>⚠️ 最重要——路由错一次影响整个任务</td></tr>
+      <tr><td><strong>Multi-Intent Accuracy</strong></td><td>多意图识别和拆分准确率</td><td>复杂场景的核心指标</td></tr>
+      <tr><td><strong>Entity Accuracy</strong></td><td>参数抽取准确率</td><td>缺少 order_id 无法执行</td></tr>
+      <tr><td><strong>End-to-End Success</strong></td><td>意图路由后最终业务成功率</td><td>唯一真正重要的指标</td></tr>
+    </tbody>
+  </table>
+  <p>Intent Evaluation 形成闭环：</p>
+  <div class="flow">
+    <span class="n">Intent Catalog</span><span class="sep">→</span>
+    <span class="n">Intent Recognition</span><span class="sep">→</span>
+    <span class="n">Routing</span><span class="sep">→</span>
+    <span class="n">Execution Result</span><span class="sep">→</span>
+    <span class="n">Outcome Evaluation</span><span class="sep">→</span>
+    <span class="n">优化 Catalog / Examples / Model</span><span class="sep">→</span>
+    <span class="n">重新评估</span>
+  </div>
+
+  <div class="ch-nav">
+    <a data-target="ch16">← 上一章：工程规范总结</a>
     <span></span>
   </div>
 </article>
@@ -2793,6 +3140,7 @@ Agent 回复：{agent_response}
     { id: 'ch14', title: '可观测性',             num: '第十四章' },
     { id: 'ch15', title: '评估与测试',           num: '第十五章' },
     { id: 'ch16', title: '工程规范总结',         num: '第十六章' },
+    { id: 'ch17', title: '意图识别与路由',        num: '第十七章' },
   ];
 
   const TOTAL = CHAPTERS.length;
